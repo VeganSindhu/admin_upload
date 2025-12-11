@@ -16,10 +16,9 @@ TARGET_PATH = "processed_pivot.csv"  # file path inside repo
 BRANCH = "main"
 
 # GitHub token — prefer using Streamlit secrets for deployment
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-if not GITHUB_TOKEN:
-    st.warning("GITHUB_TOKEN env var not found. Set environment variable before using admin publish.")
-    st.stop()
+GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+st.write("Token loaded:", bool(GITHUB_TOKEN))
+
 
 # ---------- File uploader ----------
 uploaded_file = st.file_uploader("Upload Excel (.xlsx single/multi-sheet) or CSV (pivot) - admin only", type=["xlsx","csv"])
@@ -197,3 +196,4 @@ else:
     else:
         st.write(resp_put.text)
     st.stop()
+
