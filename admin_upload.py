@@ -12,8 +12,7 @@ st.title("Admin: Upload source Excel/CSV and publish processed pivot to GitHub")
 GITHUB_OWNER = "VeganSindhu"
 GITHUB_REPO = "admin_upload"
 
-TARGET_PATH = "processed_pivot.csv"
-    # file path inside repo
+TARGET_PATH = "processed_pivot.csv"  # file path inside repo
 BRANCH = "main"
 
 # GitHub token — prefer using Streamlit secrets for deployment
@@ -64,6 +63,7 @@ def process_uploaded_to_pivot_df(uploaded):
         xls = pd.ExcelFile(uploaded)
         combined = pd.DataFrame()
         for sheet in xls.sheet_names:
+            # keep header=1 as your original logic; adjust if your sheets differ
             df_sheet = pd.read_excel(uploaded, sheet_name=sheet, header=1)
             df_sheet.columns = df_sheet.columns.astype(str).str.strip()
             df_sheet = df_sheet.dropna(axis=1, how="all")
@@ -101,8 +101,13 @@ def process_uploaded_to_pivot_df(uploaded):
         if division_col:
             div_map = combined[[name_col, division_col]].drop_duplicates().set_index(name_col)[division_col]
             pivot["Division/ Unit"] = pivot[name_col].map(div_map)
-        return pivot, name_col, pivot.columns.tolist()[1:-1] if pivot.shape[1] > 2 else []
-    
+        # compute course_cols list (exclude name and Division/ Unit if present)
+        # pivot.columns may be Index([name_col, course1, course2, ..., 'Division/ Unit'])
+        # we'll return course column names (excluding name_col and Division/ Unit)
+        cols = [c for c in pivot.columns.tolist() if c != name_col and c != "Division/ Unit"]
+        return pivot, name_col, cols
+
+# Run processing
 pivot_df, name_col, course_cols = process_uploaded_to_pivot_df(uploaded_file)
 
 st.write("Preview of processed pivot (first 10 rows):")
@@ -113,14 +118,36 @@ csv_bytes = pivot_df.to_csv(index=False).encode("utf-8")
 
 # ---------- GitHub: get existing file sha (if exists) ----------
 api_base = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{TARGET_PATH}"
-headers = {"Authorization": f"token {GITHUB_TOKEN}", "User-Agent": "admin-upload-script"}
+headers = {
+    "Authorization": f"Bearer {GITHUB_TOKEN}",
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "admin-upload-script",
+    "X-GitHub-Api-Version": "2022-11-28",
+}
 
 # get existing file to obtain sha (for update)
 resp_get = requests.get(api_base, headers=headers, params={"ref": BRANCH})
-if resp_get.status_code == 200:
-    sha = resp_get.json().get("sha")
-else:
+st.write("GET file response status:", resp_get.status_code)
+try:
+    get_json = resp_get.json()
+    st.write("GET file response json:", get_json)
+except ValueError:
+    get_json = None
+    st.write("GET file response text:", resp_get.text)
+
+if resp_get.status_code == 200 and get_json:
+    sha = get_json.get("sha")
+    st.write(f"Existing file found. sha={sha}")
+elif resp_get.status_code == 404:
     sha = None
+    st.write("File does not exist yet (404). Will create a new file.")
+else:
+    st.error(f"Failed to fetch existing file info: {resp_get.status_code}")
+    if get_json:
+        st.write(get_json)
+    else:
+        st.write(resp_get.text)
+    st.stop()
 
 # prepare payload (base64)
 content_b64 = base64.b64encode(csv_bytes).decode("utf-8")
@@ -132,15 +159,41 @@ payload = {
 if sha:
     payload["sha"] = sha
 
-resp_put = requests.put(api_base, headers=headers, data=json.dumps(payload))
-if resp_put.status_code in (200,201):
+# show payload metadata (not content) for debug
+st.write("Preparing to PUT to GitHub — branch:", BRANCH, "sha:", sha, "size(bytes):", len(csv_bytes))
+
+# Use json=payload so requests sets proper Content-Type
+resp_put = requests.put(api_base, headers=headers, json=payload)
+
+st.write("PUT response status:", resp_put.status_code)
+try:
+    put_json = resp_put.json()
+    st.write("PUT response json:", put_json)
+except ValueError:
+    put_json = None
+    st.write("PUT response text:", resp_put.text)
+
+if resp_put.status_code in (200, 201):
     st.success("Processed pivot successfully uploaded to GitHub.")
-    html_url = resp_put.json()["content"]["html_url"]
+    html_url = put_json["content"]["html_url"]
     st.write("File URL:", html_url)
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/{BRANCH}/{TARGET_PATH}"
     st.write("Raw CSV URL (use in user app):", raw_url)
 else:
     st.error("Failed to upload to GitHub. See details below.")
-    st.write(resp_put.status_code, resp_put.text)
-
-
+    st.write("Status code:", resp_put.status_code)
+    if put_json:
+        st.write(put_json)
+        msg = put_json.get("message", "")
+        # Helpful hints
+        if "Bad credentials" in msg or resp_put.status_code == 401:
+            st.error("Authentication failed. Check the token and its scopes (repo/public_repo).")
+        elif resp_put.status_code == 422:
+            st.error("Unprocessable entity (422) — likely wrong sha, branch or file path. Try removing sha to create file or fetch latest sha.")
+        elif resp_put.status_code == 403:
+            st.error("Forbidden — token might be missing required scopes or repo access is restricted.")
+        else:
+            st.info("See JSON above for more details.")
+    else:
+        st.write(resp_put.text)
+    st.stop()
