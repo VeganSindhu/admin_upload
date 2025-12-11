@@ -9,9 +9,11 @@ st.set_page_config(page_title="Admin — Upload & Publish", layout="wide")
 st.title("Admin: Upload source Excel/CSV and publish processed pivot to GitHub")
 
 # ---------- CONFIG ----------
-GITHUB_OWNER = "your-github-username"        # change
-GITHUB_REPO = "your-repo"                   # change
-TARGET_PATH = "data/processed_pivot.csv"    # file path inside repo
+GITHUB_OWNER = "VeganSindhu"
+GITHUB_REPO = "admin_upload"
+
+TARGET_PATH = "processed_pivot.csv"
+"    # file path inside repo
 BRANCH = "main"
 
 # GitHub token — prefer using Streamlit secrets for deployment
@@ -140,3 +142,4 @@ if resp_put.status_code in (200,201):
 else:
     st.error("Failed to upload to GitHub. See details below.")
     st.write(resp_put.status_code, resp_put.text)
+
